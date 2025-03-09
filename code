@@ -1,0 +1,210 @@
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Constants
+#define WIDTH 450
+#define HEIGHT 450
+#define GRID_SIZE 9
+#define MINE_COUNT 10
+#define CELL_SIZE (WIDTH / GRID_SIZE)
+
+// Structure for a cell
+typedef struct {
+    int hasMine;
+    int revealed;
+    int flagged;
+    int adjacentMines;
+} Cell;
+
+// Function prototypes
+void initSDL(SDL_Window **window, SDL_Renderer **renderer, TTF_Font **font);
+void createGameBoard(Cell board[GRID_SIZE][GRID_SIZE]);
+void drawGameBoard(SDL_Renderer *renderer, Cell board[GRID_SIZE][GRID_SIZE], TTF_Font *font);
+void handleEvents(SDL_Event *event, Cell board[GRID_SIZE][GRID_SIZE]);
+void revealCell(Cell board[GRID_SIZE][GRID_SIZE], int x, int y);
+void countAdjacentMines(Cell board[GRID_SIZE][GRID_SIZE], int x, int y);
+
+int main() {
+    srand(time(NULL)); // Seed for random mine placement
+
+    SDL_Window *window = NULL;
+    SDL_Renderer *renderer = NULL;
+    TTF_Font *font = NULL;
+    
+    Cell gameBoard[GRID_SIZE][GRID_SIZE];
+
+    initSDL(&window, &renderer, &font);
+    createGameBoard(gameBoard);
+
+    SDL_Event event;
+    int running = 1;
+
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            handleEvents(&event, gameBoard);
+            if (event.type == SDL_QUIT) {
+                running = 0;
+            }
+        }
+
+        drawGameBoard(renderer, gameBoard, font);
+        SDL_RenderPresent(renderer);
+    }
+
+    TTF_CloseFont(font);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
+
+    return 0;
+}
+
+void initSDL(SDL_Window **window, SDL_Renderer **renderer, TTF_Font **font) {
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    if (TTF_Init() == -1) {
+        printf("TTF could not initialize! SDL_ttf Error: %s\n", TTF_GetError());
+        exit(1);
+    }
+
+    *window = SDL_CreateWindow("Minesweeper", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, SDL_WINDOW_SHOWN);
+    if (!*window) {
+        printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    *renderer = SDL_CreateRenderer(*window, -1, SDL_RENDERER_ACCELERATED);
+    if (!*renderer) {
+        printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    *font = TTF_OpenFont("arial.ttf", 24);
+    if (!*font) {
+        printf("Failed to load font! SDL_ttf Error: %s\n", TTF_GetError());
+        exit(1);
+    }
+}
+
+void createGameBoard(Cell board[GRID_SIZE][GRID_SIZE]) {
+    for (int i = 0; i < GRID_SIZE; i++) {
+        for (int j = 0; j < GRID_SIZE; j++) {
+            board[i][j].hasMine = 0;
+            board[i][j].revealed = 0;
+            board[i][j].flagged = 0;
+            board[i][j].adjacentMines = 0;
+        }
+    }
+
+    // Randomly place mines
+    for (int i = 0; i < MINE_COUNT; i++) {
+        int x, y;
+        do {
+            x = rand() % GRID_SIZE;
+            y = rand() % GRID_SIZE;
+        } while (board[y][x].hasMine);
+        board[y][x].hasMine = 1;
+    }
+
+    // Calculate adjacent mines for each cell
+    for (int i = 0; i < GRID_SIZE; i++) {
+        for (int j = 0; j < GRID_SIZE; j++) {
+            if (!board[i][j].hasMine) {
+                countAdjacentMines(board, j, i);
+            }
+        }
+    }
+}
+
+void drawGameBoard(SDL_Renderer *renderer, Cell board[GRID_SIZE][GRID_SIZE], TTF_Font *font) {
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); // White background
+    SDL_RenderClear(renderer);
+
+    for (int i = 0; i < GRID_SIZE; i++) {
+        for (int j = 0; j < GRID_SIZE; j++) {
+            if (board[i][j].revealed) {
+                SDL_SetRenderDrawColor(renderer, board[i][j].hasMine ? 255 : 200, 0, 0, 255);
+            } else if (board[i][j].flagged) {
+                SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255); // Green for flagged cells
+            } else {
+                SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255); // Dark gray for unopened cells
+            }
+
+            SDL_Rect rect = { j * CELL_SIZE, i * CELL_SIZE, CELL_SIZE, CELL_SIZE };
+            SDL_RenderFillRect(renderer, &rect);
+
+            // Draw numbers for adjacent mines
+            if (board[i][j].revealed && board[i][j].adjacentMines > 0 && !board[i][j].hasMine) {
+                SDL_Color textColor = { 0, 0, 0, 255 };
+                char text[2];
+                sprintf(text, "%d", board[i][j].adjacentMines);
+                
+                SDL_Surface *textSurface = TTF_RenderText_Solid(font, text, textColor);
+                SDL_Texture *textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+                SDL_Rect textRect = { j * CELL_SIZE + 15, i * CELL_SIZE + 10, 20, 30 };
+                SDL_RenderCopy(renderer, textTexture, NULL, &textRect);
+
+                SDL_FreeSurface(textSurface);
+                SDL_DestroyTexture(textTexture);
+            }
+        }
+    }
+}
+
+void handleEvents(SDL_Event *event, Cell board[GRID_SIZE][GRID_SIZE]) {
+    if (event->type == SDL_MOUSEBUTTONDOWN) {
+        int x = event->button.x / CELL_SIZE;
+        int y = event->button.y / CELL_SIZE;
+
+        if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
+            if (event->button.button == SDL_BUTTON_LEFT) {
+                revealCell(board, x, y);
+            } else if (event->button.button == SDL_BUTTON_RIGHT) {
+                board[y][x].flagged = !board[y][x].flagged;
+            }
+        }
+    }
+}
+
+void revealCell(Cell board[GRID_SIZE][GRID_SIZE], int x, int y) {
+    if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE || board[y][x].revealed || board[y][x].flagged) {
+        return;
+    }
+
+    board[y][x].revealed = 1;
+
+    if (board[y][x].hasMine) {
+        printf("Game Over!\n");
+        SDL_Delay(2000);
+        exit(0);
+    }
+
+    if (board[y][x].adjacentMines == 0) {
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                if (i == 0 && j == 0) continue;
+                revealCell(board, x + j, y + i);
+            }
+        }
+    }
+}
+
+void countAdjacentMines(Cell board[GRID_SIZE][GRID_SIZE], int x, int y) {
+    int count = 0;
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            int newX = x + j, newY = y + i;
+            if (newX >= 0 && newX < GRID_SIZE && newY >= 0 && newY < GRID_SIZE && board[newY][newX].hasMine) {
+                count++;
+            }
+        }
+    }
+    board[y][x].adjacentMines = count;
+}
